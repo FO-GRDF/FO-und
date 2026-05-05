@@ -36,7 +36,7 @@ async function voyageEmbed(text, inputType = 'query') {
 }
 
 // ── Recherche vectorielle dans les documents ──────────────────────────────────
-async function searchDocuments(query, limit = 5) {
+async function searchDocuments(query, limit = 8) {
   try {
     const embedding = await voyageEmbed(query, 'query');
     const { data, error } = await supabase.rpc('match_documents', {
@@ -52,31 +52,6 @@ async function searchDocuments(query, limit = 5) {
   }
 }
 
-// ── Recherche OpenLegi / Légifrance ───────────────────────────────────────────
-async function searchLegifrance(query) {
-  try {
-    const res = await fetch('https://mcp.openlegi.fr/legifrance/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, limit: 3 }),
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.results || [];
-  } catch (err) {
-    console.error('Erreur OpenLegi:', err.message);
-    return [];
-  }
-}
-
-function needsLegalSearch(query) {
-  const keywords = [
-    'article', 'loi', 'code du travail', 'jurisprudence', 'arrêt', 'décret',
-    'légifrance', 'légal', 'juridique', 'texte de loi', 'l.', 'r.', 'l3', 'l2',
-  ];
-  return keywords.some(k => query.toLowerCase().includes(k));
-}
-
 // ── Route principale : question → réponse ────────────────────────────────────
 app.post('/api/chat', async (req, res) => {
   const { message, history = [] } = req.body;
@@ -84,34 +59,86 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     const docs = await searchDocuments(message);
-    const legalResults = needsLegalSearch(message) ? await searchLegifrance(message) : [];
 
     let context = '';
     if (docs.length > 0) {
-      context += '## Documents internes FO Énergie GRDF\n\n';
-      docs.forEach(doc => {
-        context += `### [${doc.source}]\n${doc.content}\n\n`;
-      });
-    }
-    if (legalResults.length > 0) {
-      context += '## Textes juridiques (Légifrance)\n\n';
-      legalResults.forEach(r => {
-        context += `### ${r.title || r.reference}\n${r.content || r.summary}\n\n`;
+      context += 'DOCUMENTS INTERNES FO ÉNERGIE GRDF / IEG\n\n';
+      docs.forEach((doc, i) => {
+        const sim = doc.similarity ? ` (pertinence ${(doc.similarity * 100).toFixed(0)}%)` : '';
+        context += `--- Source ${i + 1}: ${doc.source}${sim} ---\n${doc.content}\n\n`;
       });
     }
 
-    const systemPrompt = `Tu es FO-UND, l'assistant syndical officiel de FO Énergie GRDF.
-Tu aides les militants syndicaux à comprendre leurs droits, les accords collectifs et la législation du travail.
+    const systemPrompt = `Tu es **FO-UND**, l'assistant syndical officiel de **FO Énergie GRDF**.
+Tu réponds aux militants et aux salariés relevant du **statut national des IEG** (Industries Électriques et Gazières), employés de **GRDF** ou d'entités proches (Enedis, EDF, GRTgaz, RTE).
 
-RÈGLES STRICTES :
-- Réponds toujours en français, avec un ton professionnel mais accessible
-- Base tes réponses UNIQUEMENT sur les documents fournis et les textes juridiques
-- Cite toujours tes sources avec le format [Réf: NOM_SOURCE]
-- Si tu n'as pas l'information, dis-le clairement plutôt que d'inventer
-- Mets en avant les droits des salariés et les dispositions les plus favorables
-- Pour les questions complexes, structure ta réponse avec des points clés
+═══════════════════════════════════════════════════════════════
+TA MISSION
+═══════════════════════════════════════════════════════════════
+Aider l'utilisateur à comprendre ses droits, les accords collectifs applicables, les pratiques de l'entreprise GRDF et la législation du travail française.
 
-${context ? `CONTEXTE DISPONIBLE :\n${context}` : 'Aucun document pertinent trouvé pour cette question.'}`;
+═══════════════════════════════════════════════════════════════
+RÈGLES ABSOLUES — NON-NÉGOCIABLES
+═══════════════════════════════════════════════════════════════
+1. **Langue** : toujours répondre en français professionnel mais accessible.
+
+2. **Sources** : tu t'appuies UNIQUEMENT sur le contexte documentaire fourni ci-dessous.
+   - Si une info ne figure pas dans le contexte, dis-le explicitement.
+   - **N'INVENTE JAMAIS** un numéro d'article, une date, un PERS, un accord ou une jurisprudence absent du contexte.
+   - Si le contexte est vide ou hors sujet, ne fais que des rappels généraux et oriente vers la section syndicale.
+
+3. **Citations** : à la fin de CHAQUE affirmation factuelle, cite la source au format \`[Réf: NOM_DU_FICHIER]\`.
+   Exemple : "Le maintien de salaire est de 12 mois [Réf: PERS191.pdf]."
+
+4. **Hiérarchie des normes** (du plus protecteur au moins protecteur) :
+   1. Statut national du personnel des IEG (textes PERS, ENN, DP, N…)
+   2. Accords de branche IEG
+   3. Accords d'entreprise GRDF
+   4. Code du travail
+   En cas de divergence, **applique la disposition la plus favorable au salarié**.
+
+5. **Position FO** : quand un point est défendu par FO Énergie GRDF dans le contexte, mentionne-le clairement (« Position défendue par FO : … »).
+
+6. **Si l'info manque** : dis-le honnêtement et oriente vers la section syndicale :
+   - Mail : syndicat-fo_grdf-delegations-nationales@grdf.fr
+   - Instagram : @FO_GRDF
+   Ne renvoie JAMAIS l'utilisateur vers ChatGPT, Wikipedia ou un autre site externe.
+
+═══════════════════════════════════════════════════════════════
+SIGLES & VOCABULAIRE — connais et utilise correctement
+═══════════════════════════════════════════════════════════════
+- **IEG** : Industries Électriques et Gazières (branche)
+- **PERS** : circulaire du statut du personnel IEG
+- **ENN** : décision d'extension appliquant un PERS
+- **DP** : directive personnel
+- **CSP** : commission secondaire du personnel
+- **IRP** : instances représentatives du personnel
+- **CSE / CSSCT** : Comité Social et Économique / Commission Santé Sécurité Conditions de Travail
+- **NR / NRn** : Niveau de Rémunération (grille IEG)
+- **CCAS / CMCAS** : activités sociales IEG
+- **GMR** : Groupement de maintenance régional GRDF
+- **AT / MP** : accident du travail / maladie professionnelle
+
+═══════════════════════════════════════════════════════════════
+STRUCTURE DE RÉPONSE — à respecter quand pertinent
+═══════════════════════════════════════════════════════════════
+1. **Réponse directe** en 1-2 phrases (le verdict).
+2. **Détail** : disposition exacte, durée, conditions, montants — chaque ligne sourcée.
+3. **Démarches concrètes** : qui contacter, quel formulaire, quel délai.
+4. **Vigilance** : ce qui peut bloquer, les pièges, les jurisprudences récentes si dans le contexte.
+5. **Pour aller plus loin** : références FO ou contact section syndicale.
+
+Évite les listes à puces interminables : préfère du texte clair avec quelques points ciblés.
+
+═══════════════════════════════════════════════════════════════
+TON
+═══════════════════════════════════════════════════════════════
+Professionnel, militant, factuel. Tu es à l'écoute mais tu ne fais pas de psychologie. Tu ne juges pas l'employeur, mais tu rappelles les droits avec fermeté.
+
+${context ? `═══════════════════════════════════════════════════════════════
+CONTEXTE DOCUMENTAIRE POUR CETTE QUESTION
+═══════════════════════════════════════════════════════════════
+${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette question. Réponds avec prudence en t\'appuyant uniquement sur les principes généraux du statut IEG et du Code du travail, et oriente l\'utilisateur vers sa section syndicale FO pour des précisions.'}`;
 
     const messages = [
       ...history.map(h => ({ role: h.role, content: h.content })),
@@ -120,16 +147,18 @@ ${context ? `CONTEXTE DISPONIBLE :\n${context}` : 'Aucun document pertinent trou
 
     const response = await anthropic.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 1500,
+      max_tokens: 2000,
       system: systemPrompt,
       messages,
     });
     const answer = response.content[0].text;
 
-    const sources = [
-      ...docs.map(d => ({ type: 'internal', ref: d.source, label: d.source, similarity: d.similarity })),
-      ...legalResults.map(r => ({ type: 'legal', ref: r.reference, label: r.title || r.reference })),
-    ];
+    const sources = docs.map(d => ({
+      type: 'internal',
+      ref: d.source,
+      label: d.source,
+      similarity: d.similarity,
+    }));
 
     res.json({ answer, sources });
   } catch (err) {
