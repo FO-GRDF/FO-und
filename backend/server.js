@@ -41,7 +41,7 @@ async function searchDocuments(query, limit = 5) {
     const embedding = await voyageEmbed(query, 'query');
     const { data, error } = await supabase.rpc('match_documents', {
       query_embedding: embedding,
-      match_threshold: 0.5,
+      match_threshold: 0.3,
       match_count: limit,
     });
     if (error) throw error;
