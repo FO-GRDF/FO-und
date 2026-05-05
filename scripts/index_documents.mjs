@@ -1,12 +1,8 @@
 #!/usr/bin/env node
 /**
- * FO-UND — Script d'indexation des documents (v2)
- *
- * Usage :
- *   node index_documents.mjs --dir /chemin/vers/dossier
- *
- * Formats supportés : PDF, DOCX, TXT, MD, HTML
- * Embeddings : Voyage AI (voyage-3) via REST.
+ * FO-UND — Indexation des documents (v3)
+ * v3 : nettoyage des patterns parasites (DocuSign, symboles répétés)
+ *      + chunking respectant les paragraphes
  */
 import fs from 'fs';
 import path from 'path';
@@ -27,29 +23,66 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 }
 if (!VOYAGE_KEY) {
   console.error('❌ VOYAGE_API_KEY manquant dans .env');
-  console.error('   → Récupère une clé gratuite sur https://www.voyageai.com');
   process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// ── Configuration ─────────────────────────────────────────────────────────────
-const CHUNK_SIZE = 800;
-const CHUNK_OVERLAP = 100;
-const BATCH_SIZE = 8;            // embeddings en parallèle (Voyage tier free = 3 RPM, plus large sur tier paid)
+const CHUNK_SIZE = 1000;          // un peu plus large pour porter plus de contexte
+const CHUNK_OVERLAP = 150;
+const BATCH_SIZE = 8;
 const SUPPORTED_EXT = ['.txt', '.md', '.pdf', '.docx', '.html', '.htm'];
-const MAX_FILE_BYTES = 30 * 1024 * 1024; // skip > 30 MB
+const MAX_FILE_BYTES = 30 * 1024 * 1024;
 
-// ── Utilitaires ───────────────────────────────────────────────────────────────
+// ── Nettoyage des textes extraits ─────────────────────────────────────────────
+function cleanText(text) {
+  if (!text) return '';
+  return text
+    // DocuSign Envelope ID répétés (énorme bruit dans les accords signés)
+    .replace(/DocuSign Envelope ID:\s*[A-F0-9-]+/gi, ' ')
+    // Symboles décoratifs répétés (cadres, listes graphiques)
+    .replace(/[◼➢▪✓●○■□◆◇▶►•·]\s*[◼➢▪✓●○■□◆◇▶►•·\s]{2,}/g, ' ')
+    // Lignes de tirets / points / égal
+    .replace(/(?:[\s]*[-_=*~–—\.]){4,}/g, ' ')
+    // Numéros de page type "Page 12 sur 45" / "12/45"
+    .replace(/Page\s+\d+\s+(?:sur|of|\/)\s+\d+/gi, ' ')
+    // Email Cloudflare obfusqué
+    .replace(/\[email[\s]*protected\]/gi, ' ')
+    // Espaces multiples / tabulations
+    .replace(/[ \t]{2,}/g, ' ')
+    // Trois retours à la ligne ou plus → deux
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// ── Chunking respectant paragraphes ───────────────────────────────────────────
 function chunkText(text, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP) {
+  if (!text) return [];
   const chunks = [];
-  let start = 0;
-  while (start < text.length) {
-    const end = Math.min(start + size, text.length);
-    chunks.push(text.slice(start, end).trim());
-    start += size - overlap;
+  // Découper d'abord par paragraphes (double newline)
+  const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(p => p.length > 0);
+
+  let current = '';
+  for (const para of paragraphs) {
+    if (current.length === 0) {
+      current = para;
+    } else if (current.length + para.length + 2 <= size) {
+      current += '\n\n' + para;
+    } else {
+      // Flush current chunk
+      if (current.length > 100) chunks.push(current);
+      // Démarrer un nouveau chunk avec un overlap
+      const tail = current.slice(-overlap);
+      current = tail + '\n\n' + para;
+      // Si un seul paragraphe excède la taille, le splitter brutalement
+      while (current.length > size * 1.5) {
+        chunks.push(current.slice(0, size));
+        current = current.slice(size - overlap);
+      }
+    }
   }
-  return chunks.filter(c => c.length > 50);
+  if (current.trim().length > 100) chunks.push(current.trim());
+  return chunks.filter(c => c.length > 100);
 }
 
 function stripHtml(html) {
@@ -79,19 +112,20 @@ async function readFile(filePath) {
       return null;
     }
 
+    let raw = '';
     if (ext === '.pdf') {
       const buf = fs.readFileSync(filePath);
       const data = await pdf(buf);
-      return data.text || null;
-    }
-    if (ext === '.docx') {
+      raw = data.text || '';
+    } else if (ext === '.docx') {
       const result = await mammoth.extractRawText({ path: filePath });
-      return result.value || null;
+      raw = result.value || '';
+    } else if (ext === '.html' || ext === '.htm') {
+      raw = stripHtml(fs.readFileSync(filePath, 'utf-8'));
+    } else {
+      raw = fs.readFileSync(filePath, 'utf-8');
     }
-    if (ext === '.html' || ext === '.htm') {
-      return stripHtml(fs.readFileSync(filePath, 'utf-8'));
-    }
-    return fs.readFileSync(filePath, 'utf-8');
+    return cleanText(raw);
   } catch (err) {
     console.log(`  ⚠️  ${path.basename(filePath)} : ${err.message}`);
     return null;
@@ -101,13 +135,9 @@ async function readFile(filePath) {
 function getAllFiles(dir) {
   const results = [];
   let entries;
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return results;
-  }
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return results; }
   for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;            // skip .DS_Store, .git, etc.
+    if (entry.name.startsWith('.')) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       results.push(...getAllFiles(full));
@@ -119,23 +149,12 @@ function getAllFiles(dir) {
 }
 
 async function generateEmbeddings(texts) {
-  // Voyage REST — accepte un batch de textes en un appel
   const res = await fetch('https://api.voyageai.com/v1/embeddings', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${VOYAGE_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'voyage-3',
-      input: texts,
-      input_type: 'document',
-    }),
+    headers: { 'Authorization': `Bearer ${VOYAGE_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'voyage-3', input: texts, input_type: 'document' }),
   });
-  if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`Voyage ${res.status} — ${errBody}`);
-  }
+  if (!res.ok) throw new Error(`Voyage ${res.status} — ${await res.text()}`);
   const json = await res.json();
   return json.data.map(d => d.embedding);
 }
@@ -146,7 +165,6 @@ async function upsertChunks(chunks) {
   if (error) throw error;
 }
 
-// ── Programme principal ───────────────────────────────────────────────────────
 async function main() {
   const idx = process.argv.indexOf('--dir');
   const dirArg = idx > -1 ? process.argv[idx + 1] : null;
@@ -155,7 +173,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`\n🔍 Scan du dossier : ${dirArg}`);
+  console.log(`\n🔍 Scan : ${dirArg}`);
   const files = getAllFiles(dirArg);
   console.log(`📄 ${files.length} fichiers indexables trouvés\n`);
 
@@ -166,15 +184,9 @@ async function main() {
   for (const filePath of files) {
     const fileName = path.basename(filePath);
     const text = await readFile(filePath);
-    if (!text || text.trim().length < 100) {
-      skipped++;
-      continue;
-    }
+    if (!text || text.trim().length < 100) { skipped++; continue; }
     const chunks = chunkText(text);
-    if (chunks.length === 0) {
-      skipped++;
-      continue;
-    }
+    if (chunks.length === 0) { skipped++; continue; }
 
     const rows = [];
     try {
@@ -186,11 +198,7 @@ async function main() {
             source: fileName,
             content,
             embedding: embeddings[j],
-            metadata: {
-              file_path: filePath,
-              chunk_index: i + j,
-              total_chunks: chunks.length,
-            },
+            metadata: { file_path: filePath, chunk_index: i + j, total_chunks: chunks.length },
           });
         });
         process.stdout.write(`\r  📦 ${fileName} — ${Math.min(i + BATCH_SIZE, chunks.length)}/${chunks.length}`);
@@ -207,10 +215,7 @@ async function main() {
 
   console.log(`\n🎉 Indexation terminée`);
   console.log(`   ${processed} fichiers indexés / ${skipped} ignorés`);
-  console.log(`   ${totalChunks} chunks stockés dans Supabase\n`);
+  console.log(`   ${totalChunks} chunks stockés\n`);
 }
 
-main().catch(err => {
-  console.error('❌ Erreur fatale:', err);
-  process.exit(1);
-});
+main().catch(err => { console.error('❌ Fatal:', err); process.exit(1); });

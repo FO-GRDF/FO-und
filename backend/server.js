@@ -35,14 +35,17 @@ async function voyageEmbed(text, inputType = 'query') {
   return json.data[0].embedding;
 }
 
-// ── Recherche vectorielle dans les documents ──────────────────────────────────
+// ── Recherche hybride (sémantique + full-text RRF) ────────────────────────────
 async function searchDocuments(query, limit = 8) {
   try {
     const embedding = await voyageEmbed(query, 'query');
-    const { data, error } = await supabase.rpc('match_documents', {
+    const { data, error } = await supabase.rpc('hybrid_search', {
+      query_text: query,
       query_embedding: embedding,
-      match_threshold: 0.3,
       match_count: limit,
+      semantic_weight: 1.0,
+      full_text_weight: 1.2,  // léger boost pour les mots-clés exacts
+      rrf_k: 50,
     });
     if (error) throw error;
     return data || [];
@@ -64,7 +67,7 @@ app.post('/api/chat', async (req, res) => {
     if (docs.length > 0) {
       context += 'DOCUMENTS INTERNES FO ÉNERGIE GRDF / IEG\n\n';
       docs.forEach((doc, i) => {
-        const sim = doc.similarity ? ` (pertinence ${(doc.similarity * 100).toFixed(0)}%)` : '';
+        const sim = doc.similarity ? ` (similarité ${(doc.similarity * 100).toFixed(0)}%)` : '';
         context += `--- Source ${i + 1}: ${doc.source}${sim} ---\n${doc.content}\n\n`;
       });
     }
@@ -118,6 +121,7 @@ SIGLES & VOCABULAIRE — connais et utilise correctement
 - **CCAS / CMCAS** : activités sociales IEG
 - **GMR** : Groupement de maintenance régional GRDF
 - **AT / MP** : accident du travail / maladie professionnelle
+- **PEG / PERCOL** : Plan d'Épargne Groupe / Plan d'Épargne Retraite COLlectif
 
 ═══════════════════════════════════════════════════════════════
 STRUCTURE DE RÉPONSE — à respecter quand pertinent
@@ -128,7 +132,7 @@ STRUCTURE DE RÉPONSE — à respecter quand pertinent
 4. **Vigilance** : ce qui peut bloquer, les pièges, les jurisprudences récentes si dans le contexte.
 5. **Pour aller plus loin** : références FO ou contact section syndicale.
 
-Évite les listes à puces interminables : préfère du texte clair avec quelques points ciblés.
+Évite les listes à puces interminables : préfère du texte clair avec quelques points ciblées.
 
 ═══════════════════════════════════════════════════════════════
 TON
