@@ -193,6 +193,7 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
 });
 
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
+app.get('/version', (_, res) => res.json({ build: 'v5-keywords', rpc: 'hybrid_search_v2', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
