@@ -691,7 +691,7 @@
       <div class="ai-av">FO</div>
       <div class="bubble"><p>${formatted}</p>${sourcesHtml}</div>`;
     msgs.appendChild(el);
-    if (scroll) msgs.scrollTop = msgs.scrollHeight;
+    if (scroll) { setTimeout(() => el.scrollIntoView({behavior: "smooth", block: "start"}), 50); }
   }
 
   function appendTyping() {
