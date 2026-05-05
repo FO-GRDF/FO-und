@@ -36,7 +36,7 @@ async function voyageEmbed(text, inputType = 'query') {
 }
 
 // ── Recherche hybride (sémantique + full-text RRF) ────────────────────────────
-async function searchDocuments(query, limit = 8) {
+async function searchDocuments(query, limit = 15) {
   try {
     const embedding = await voyageEmbed(query, 'query');
     const { data, error } = await supabase.rpc('hybrid_search', {
