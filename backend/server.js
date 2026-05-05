@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
-import fetch from 'node-fetch';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -14,23 +13,37 @@ app.use(express.json());
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
+const VOYAGE_KEY = process.env.VOYAGE_API_KEY;
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
+
+// ── Embedding via Voyage AI ───────────────────────────────────────────────────
+async function voyageEmbed(text, inputType = 'query') {
+  const res = await fetch('https://api.voyageai.com/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${VOYAGE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'voyage-3',
+      input: [text],
+      input_type: inputType,
+    }),
+  });
+  if (!res.ok) throw new Error(`Voyage ${res.status}: ${await res.text()}`);
+  const json = await res.json();
+  return json.data[0].embedding;
+}
+
 // ── Recherche vectorielle dans les documents ──────────────────────────────────
 async function searchDocuments(query, limit = 5) {
   try {
-    // Générer l'embedding de la question
-    const embeddingRes = await anthropic.embeddings.create({
-      model: 'voyage-3',
-      input: query,
-    });
-    const embedding = embeddingRes.embeddings[0].embedding;
-
-    // Recherche sémantique dans Supabase
+    const embedding = await voyageEmbed(query, 'query');
     const { data, error } = await supabase.rpc('match_documents', {
       query_embedding: embedding,
-      match_threshold: 0.7,
+      match_threshold: 0.5,
       match_count: limit,
     });
-
     if (error) throw error;
     return data || [];
   } catch (err) {
@@ -56,7 +69,6 @@ async function searchLegifrance(query) {
   }
 }
 
-// ── Détecte si la question nécessite une recherche juridique ─────────────────
 function needsLegalSearch(query) {
   const keywords = [
     'article', 'loi', 'code du travail', 'jurisprudence', 'arrêt', 'décret',
@@ -68,26 +80,19 @@ function needsLegalSearch(query) {
 // ── Route principale : question → réponse ────────────────────────────────────
 app.post('/api/chat', async (req, res) => {
   const { message, history = [] } = req.body;
-
   if (!message) return res.status(400).json({ error: 'Message manquant' });
 
   try {
-    // 1. Recherche dans les documents internes
     const docs = await searchDocuments(message);
-
-    // 2. Recherche Légifrance si pertinent
     const legalResults = needsLegalSearch(message) ? await searchLegifrance(message) : [];
 
-    // 3. Construction du contexte
     let context = '';
-
     if (docs.length > 0) {
       context += '## Documents internes FO Énergie GRDF\n\n';
-      docs.forEach((doc, i) => {
+      docs.forEach(doc => {
         context += `### [${doc.source}]\n${doc.content}\n\n`;
       });
     }
-
     if (legalResults.length > 0) {
       context += '## Textes juridiques (Légifrance)\n\n';
       legalResults.forEach(r => {
@@ -95,7 +100,6 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    // 4. Prompt système
     const systemPrompt = `Tu es FO-UND, l'assistant syndical officiel de FO Énergie GRDF.
 Tu aides les militants syndicaux à comprendre leurs droits, les accords collectifs et la législation du travail.
 
@@ -109,36 +113,31 @@ RÈGLES STRICTES :
 
 ${context ? `CONTEXTE DISPONIBLE :\n${context}` : 'Aucun document pertinent trouvé pour cette question.'}`;
 
-    // 5. Appel Claude
     const messages = [
       ...history.map(h => ({ role: h.role, content: h.content })),
       { role: 'user', content: message },
     ];
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: CLAUDE_MODEL,
       max_tokens: 1500,
       system: systemPrompt,
       messages,
     });
-
     const answer = response.content[0].text;
 
-    // 6. Sources utilisées
     const sources = [
-      ...docs.map(d => ({ type: 'internal', ref: d.source, label: d.source })),
+      ...docs.map(d => ({ type: 'internal', ref: d.source, label: d.source, similarity: d.similarity })),
       ...legalResults.map(r => ({ type: 'legal', ref: r.reference, label: r.title || r.reference })),
     ];
 
     res.json({ answer, sources });
-
   } catch (err) {
     console.error('Erreur chat:', err);
     res.status(500).json({ error: 'Erreur serveur', detail: err.message });
   }
 });
 
-// ── Health check ─────────────────────────────────────────────────────────────
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
 
 const PORT = process.env.PORT || 3001;
