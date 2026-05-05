@@ -35,12 +35,35 @@ async function voyageEmbed(text, inputType = 'query') {
   return json.data[0].embedding;
 }
 
+// ── Extraction de mots-clés pour la recherche full-text ───────────────────────
+const STOP_WORDS_FR = new Set([
+  'le','la','les','un','une','des','de','du','en','et','ou','est','sont','etre','ete',
+  'quel','quelle','quels','quelles','que','qui','quoi','comment','pourquoi','quand',
+  'a','au','aux','ce','cette','ces','ma','mon','mes','ta','ton','tes','sa','son','ses',
+  'notre','votre','leur','leurs','me','te','se','nous','vous','il','elle','ils','elles',
+  'je','tu','chez','sur','sous','dans','avec','pour','par','sans','cas','si','taux',
+  'plus','tout','tous','toute','toutes','mais','donc','car','ne','pas','non','oui',
+  'fait','faire','peut','peuvent','dois','doit','doivent','avoir','ai','as','aurait',
+  'puis','peux','sera','etait','etaient','grdf'
+]);
+function extractKeywords(text) {
+  return text
+    .toLowerCase()
+    .replace(/[''’]/g, ' ')
+    .split(/[^a-zàâäéèêëîïôöùûüÿç0-9-]+/i)
+    .filter(w => w.length > 2 && !STOP_WORDS_FR.has(w))
+    .slice(0, 10)
+    .join(' ');
+}
+
 // ── Recherche hybride (sémantique + full-text RRF) ────────────────────────────
 async function searchDocuments(query, limit = 15) {
   try {
     const embedding = await voyageEmbed(query, 'query');
-    const { data, error } = await supabase.rpc('hybrid_search', {
-      query_text: query,
+    const keywords = extractKeywords(query) || query;
+    console.log('Keywords FT:', keywords);
+    const { data, error } = await supabase.rpc('hybrid_search_v2', {
+      query_text: keywords,
       query_embedding: embedding,
       match_count: limit,
       semantic_weight: 1.0,
