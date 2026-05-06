@@ -82,12 +82,11 @@ async function expandQuery(question) {
         model: HAIKU_MODEL,
         max_tokens: 100,
         system: [
-          "Tu es un expert syndical des Industries Électriques et Gazières (IEG / GRDF).",
-          "Pour la question utilisateur, génère 6 à 12 mots-clés français pertinents pour rechercher dans une base d'accords syndicaux et statut IEG (PERS, ENN, DP, accords de branche).",
-          "Inclus : synonymes, sigles spécifiques (CNIEG, CAMIEG, CSP, IRP, PEG, PERCOL), termes juridiques exacts. Décolle les apostrophes (d'invalidité → invalidite).",
-          "Réponds UNIQUEMENT avec les mots-clés séparés par des espaces, en minuscule, sans accents, sans phrase, sans ponctuation, sans explication.",
-          "Exemple : « Quel taux d'abondement ? » → « abondement interessement participation versement plafond peg percol »",
-          "Exemple : « cas d'invalidite type 2 ? » → « invalidite incapacite pension cniega complement statut categorie deuxieme »",
+          "Tu es un expert syndical IEG/GRDF. Pour la question utilisateur, génère EXACTEMENT 4 à 5 mots-clés français focalisés sur le sujet principal — les plus précis et discriminants — pour rechercher dans une base d'accords syndicaux IEG.",
+          "Privilégie les termes spécifiques (PERS, ENN, DP, sigles CNIEG/CAMIEG/CSP/IRP/PEG/PERCOL, vocabulaire juridique exact). Décolle les apostrophes (d'invalidité → invalidite). Évite les mots vagues (salaire, maintien, indemnite, allocation) sauf si centraux à la question.",
+          "Réponds UNIQUEMENT avec les 4-5 mots-clés séparés par des espaces, en minuscule, sans accents, sans phrase, sans ponctuation, sans explication.",
+          "Exemple : « Quel taux d'abondement ? » → « abondement interessement plafond peg percol »",
+          "Exemple : « cas d'invalidite type 2 ? » → « invalidite incapacite pension cniega complement »",
         ].join('\n'),
         messages: [{ role: 'user', content: question }],
       }),
@@ -254,7 +253,7 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
 });
 
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
-app.get('/version', (_, res) => res.json({ build: 'v7-query-expansion', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
+app.get('/version', (_, res) => res.json({ build: 'v8-focused-keywords', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
