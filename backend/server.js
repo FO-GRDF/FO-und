@@ -16,23 +16,41 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const VOYAGE_KEY = process.env.VOYAGE_API_KEY;
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
 
+// ── Retry avec backoff exponentiel ────────────────────────────────────────────
+async function withRetry(fn, label = '?', maxAttempts = 3) {
+  let lastErr;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const isLast = i === maxAttempts - 1;
+      const isRetriable = err.status === 429 || err.status === 503 || (err.status >= 500 && err.status < 600) || /timeout|ECONNRESET|fetch failed/i.test(String(err.message));
+      console.error(`[${label}] attempt ${i + 1}/${maxAttempts} failed: ${err.message || err.status}`);
+      if (isLast || !isRetriable) break;
+      const delay = Math.min(1000 * Math.pow(2, i), 8000) + Math.random() * 500;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
 // ── Embedding via Voyage AI ───────────────────────────────────────────────────
 async function voyageEmbed(text, inputType = 'query') {
-  const res = await fetch('https://api.voyageai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${VOYAGE_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'voyage-3',
-      input: [text],
-      input_type: inputType,
-    }),
-  });
-  if (!res.ok) throw new Error(`Voyage ${res.status}: ${await res.text()}`);
-  const json = await res.json();
-  return json.data[0].embedding;
+  return withRetry(async () => {
+    const res = await fetch('https://api.voyageai.com/v1/embeddings', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${VOYAGE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'voyage-3', input: [text], input_type: inputType }),
+    });
+    if (!res.ok) {
+      const e = new Error(`Voyage ${res.status}: ${await res.text()}`);
+      e.status = res.status;
+      throw e;
+    }
+    const json = await res.json();
+    return json.data[0].embedding;
+  }, 'voyage');
 }
 
 // ── Extraction de mots-clés pour la recherche full-text ───────────────────────
@@ -44,30 +62,31 @@ const STOP_WORDS_FR = new Set([
   'je','tu','chez','sur','sous','dans','avec','pour','par','sans','cas','si','taux',
   'plus','tout','tous','toute','toutes','mais','donc','car','ne','pas','non','oui',
   'fait','faire','peut','peuvent','dois','doit','doivent','avoir','ai','as','aurait',
-  'puis','peux','sera','etait','etaient','grdf'
+  'puis','peux','sera','etait','etaient','grdf','dit','dire'
 ]);
 function extractKeywords(text) {
   return text
     .toLowerCase()
     .replace(/[''’]/g, ' ')
     .split(/[^a-zàâäéèêëîïôöùûüÿç0-9-]+/i)
-    .filter(w => w.length > 2 && !STOP_WORDS_FR.has(w))
-    .slice(0, 10)
+    .filter(w => w.length > 1 && !STOP_WORDS_FR.has(w))
+    .slice(0, 12)
     .join(' ');
 }
 
-// ── Recherche hybride (sémantique + full-text RRF) ────────────────────────────
+// ── Recherche hybride v3 (semantic + full-text + filename) ───────────────────
 async function searchDocuments(query, limit = 15) {
   try {
     const embedding = await voyageEmbed(query, 'query');
     const keywords = extractKeywords(query) || query;
-    console.log('Keywords FT:', keywords);
-    const { data, error } = await supabase.rpc('hybrid_search_v2', {
+    console.log('FT keywords:', keywords);
+    const { data, error } = await supabase.rpc('hybrid_search_v3', {
       query_text: keywords,
       query_embedding: embedding,
       match_count: limit,
+      full_text_weight: 2.0,
       semantic_weight: 1.0,
-      full_text_weight: 1.2,  // léger boost pour les mots-clés exacts
+      filename_weight: 5.0,
       rrf_k: 50,
     });
     if (error) throw error;
@@ -110,20 +129,26 @@ RÈGLES ABSOLUES — NON-NÉGOCIABLES
 
 2. **Sources** : tu t'appuies UNIQUEMENT sur le contexte documentaire fourni ci-dessous.
    - Si une info ne figure pas dans le contexte, dis-le explicitement.
-   - **N'INVENTE JAMAIS** un numéro d'article, une date, un PERS, un accord ou une jurisprudence absent du contexte.
    - Si le contexte est vide ou hors sujet, ne fais que des rappels généraux et oriente vers la section syndicale.
 
-3. **Citations** : à la fin de CHAQUE affirmation factuelle, cite la source au format \`[Réf: NOM_DU_FICHIER]\`.
-   Exemple : "Le maintien de salaire est de 12 mois [Réf: PERS191.pdf]."
+3. **🚫 INTERDICTION ABSOLUE D'INVENTER UNE RÉFÉRENCE.**
+   - Tu ne dois JAMAIS citer un numéro de PERS, DP, ENN, N, article de loi, jurisprudence, accord, ou date qui n'apparaît pas EXPLICITEMENT dans le contexte fourni.
+   - Si l'utilisateur te demande "Que dit la PERS X ?" et que cette PERS X n'est pas dans le contexte : dis « La PERS X n'est pas dans ma base documentaire actuelle ». Ne mentionne PAS d'autres PERS sauf s'ils figurent vraiment dans le contexte.
+   - Pareil pour les articles : ne cite jamais "article L.X-Y du Code du travail" sans être absolument sûr qu'il figure dans le contexte.
+   - Si tu ne sais pas, dis « Je ne sais pas » plutôt que d'inventer.
 
-4. **Hiérarchie des normes** (du plus protecteur au moins protecteur) :
+4. **Citations** : à la fin de CHAQUE affirmation factuelle, cite la source au format \`[Réf: NOM_DU_FICHIER]\`.
+   Exemple : "Le maintien de salaire est de 12 mois [Réf: PERS191.pdf]."
+   N'utilise QUE les noms de fichier qui figurent dans la liste des sources fournies.
+
+5. **Hiérarchie des normes** (du plus protecteur au moins protecteur) :
    1. Statut national du personnel des IEG (textes PERS, ENN, DP, N…)
    2. Accords de branche IEG
    3. Accords d'entreprise GRDF
    4. Code du travail
    En cas de divergence, **applique la disposition la plus favorable au salarié**.
 
-5. **Si l'info manque** : dis-le honnêtement et oriente vers la section syndicale :
+6. **Si l'info manque** : dis-le honnêtement et oriente vers la section syndicale :
    - Mail : syndicat-fo_grdf-delegations-nationales@grdf.fr
    - Instagram : @FO_GRDF
    Ne renvoie JAMAIS l'utilisateur vers ChatGPT, Wikipedia ou un autre site externe.
@@ -150,10 +175,10 @@ STRUCTURE DE RÉPONSE — à respecter quand pertinent
 1. **Réponse directe** en 1-2 phrases (le verdict).
 2. **Détail** : disposition exacte, durée, conditions, montants — chaque ligne sourcée.
 3. **Démarches concrètes** : qui contacter, quel formulaire, quel délai.
-4. **Vigilance** : ce qui peut bloquer, les pièges, les jurisprudences récentes si dans le contexte.
+4. **Vigilance** : ce qui peut bloquer, les pièges si dans le contexte.
 5. **Pour aller plus loin** : références FO ou contact section syndicale.
 
-Évite les listes à puces interminables : préfère du texte clair avec quelques points ciblées.
+Évite les listes à puces interminables : préfère du texte clair avec quelques points ciblés.
 
 ═══════════════════════════════════════════════════════════════
 TON
@@ -163,19 +188,22 @@ Professionnel, militant, factuel. Tu es à l'écoute mais tu ne fais pas de psyc
 ${context ? `═══════════════════════════════════════════════════════════════
 CONTEXTE DOCUMENTAIRE POUR CETTE QUESTION
 ═══════════════════════════════════════════════════════════════
-${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette question. Réponds avec prudence en t\'appuyant uniquement sur les principes généraux du statut IEG et du Code du travail, et oriente l\'utilisateur vers sa section syndicale FO pour des précisions.'}`;
+${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette question. Tu peux faire un rappel général sur les principes du statut IEG et du Code du travail SANS citer de numéro précis (PERS, DP, ENN, articles), et oriente vers la section syndicale FO.'}`;
 
     const messages = [
       ...history.map(h => ({ role: h.role, content: h.content })),
       { role: 'user', content: message },
     ];
 
-    const response = await anthropic.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 2000,
-      system: systemPrompt,
-      messages,
-    });
+    const response = await withRetry(
+      () => anthropic.messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: 2000,
+        system: systemPrompt,
+        messages,
+      }),
+      'anthropic'
+    );
     const answer = response.content[0].text;
 
     const sources = docs.map(d => ({
@@ -193,7 +221,7 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
 });
 
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
-app.get('/version', (_, res) => res.json({ build: 'v5-keywords', rpc: 'hybrid_search_v2', deployed: new Date().toISOString() }));
+app.get('/version', (_, res) => res.json({ build: 'v6-filename-retry', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
