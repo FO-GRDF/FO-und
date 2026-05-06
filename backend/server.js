@@ -82,18 +82,22 @@ async function expandQuery(question) {
         model: HAIKU_MODEL,
         max_tokens: 100,
         system: [
-          "Tu es un expert syndical IEG/GRDF. Pour la question utilisateur, génère 3 à 5 mots-clés français qui figurent EXACTEMENT dans le vocabulaire des accords syndicaux IEG.",
-          "Règles strictes :",
-          " - Décolle les apostrophes (dinvalidite → invalidite, dabondement → abondement)",
-          " - Utilise le vocabulaire EXACT des accords IEG, pas du régime général. Ex: 'incapacite totale d exercer', pas 'categorie 2'. Ex: 'complement', 'CNIEG', 'CAMIEG'.",
-          " - N'utilise PAS de mots génériques seuls (PERS sans numéro, rente, categorie, taux, montant) sauf s'ils sont vraiment centraux",
-          " - Privilégie les sigles spécifiques : CNIEG, CAMIEG, CSP, IRP, PEG, PERCOL, NR, NRn, GMR, IEG, AT, MP",
-          " - Si la question contient un identifiant (PERS 187, DP37-44), l'inclure tel quel",
-          "Réponds UNIQUEMENT avec les 3 à 5 mots-clés séparés par des espaces, en minuscule, sans accents, sans phrase, sans ponctuation, sans explication.",
-          "Exemple « Quel taux d'abondement ? » → « abondement interessement plafond peg percol »",
-          "Exemple « cas d'invalidite type 2 ? » → « invalidite incapacite pension cniega complement »",
-          "Exemple « Quels droits en cas d'arret maladie ? » → « maladie arret pension cniega caamieg »",
-          "Exemple « Combien je gagne en astreinte ? » → « astreinte sujetions service indemnite PERS194 »",
+          "Tu es un expert syndical IEG/GRDF qui aide à générer des mots-clés de recherche. Tu reçois une question utilisateur — qui peut contenir des FAUTES D'ORTHOGRAPHE, des apostrophes manquantes, des accents oubliés, des sigles mal écrits.",
+          "Étapes :",
+          " 1. Corrige mentalement TOUTES les fautes : orthographe, accords, accents, conjugaisons, frappes inversées, apostrophes manquantes (dinvalidite → invalidite, abondemen → abondement, retrate → retraite, syndicale → syndicale, intéressment → interessement, primre → prime).",
+          " 2. Identifie le concept syndical IEG dont parle la question — même si l'utilisateur utilise un terme du régime général (catégorie 2 → incapacité totale ; arrêt maladie → maladie longue ; mutuelle → CAMIEG ; retraite complémentaire → PERCOL).",
+          " 3. Génère 3 à 6 mots-clés français qui figurent EXACTEMENT dans le vocabulaire des accords IEG, en minuscule sans accents.",
+          "Règles :",
+          " - Privilégie les sigles spécifiques IEG : CNIEG, CAMIEG, CSP, CSNP, IRP, CSE, CSSCT, PEG, PERCOL, PEI, NR, NRn, GMR, IEG, AT, MP, IVD",
+          " - Inclus les identifiants exacts s'ils sont mentionnés (PERS 187, DP37-44, ENN1129…)",
+          " - Évite les mots génériques seuls (PERS sans numéro, rente, categorie, taux, montant) sauf s'ils sont centraux",
+          "Réponds UNIQUEMENT avec les 3 à 6 mots-clés séparés par des espaces, en minuscule, sans accents, sans phrase, sans ponctuation, sans explication.",
+          "Exemples (la question peut contenir des fautes — corrige-les) :",
+          "  « Quel taux dabondement ? » → « abondement interessement plafond peg percol »",
+          "  « cas dinvalidite tipe 2 ? » → « invalidite incapacite pension cniega complement »",
+          "  « Quels droit en cas darret maladi ? » → « maladie arret pension cniega caamieg »",
+          "  « Comben je gagn en astrente ? » → « astreinte sujetions service indemnite PERS194 »",
+          "  « vol matériel info procedure disciplinare » → « discipline sanction csp pers846 vol »",
         ].join('\n'),
         messages: [{ role: 'user', content: question }],
       }),
@@ -260,7 +264,7 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
 });
 
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
-app.get('/version', (_, res) => res.json({ build: 'v9-better-haiku-prompt', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
+app.get('/version', (_, res) => res.json({ build: 'v10-typo-tolerant', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
