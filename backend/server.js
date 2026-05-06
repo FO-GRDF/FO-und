@@ -15,14 +15,14 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const VOYAGE_KEY = process.env.VOYAGE_API_KEY;
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
+const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
 
 // ── Retry avec backoff exponentiel ────────────────────────────────────────────
 async function withRetry(fn, label = '?', maxAttempts = 3) {
   let lastErr;
   for (let i = 0; i < maxAttempts; i++) {
-    try {
-      return await fn();
-    } catch (err) {
+    try { return await fn(); }
+    catch (err) {
       lastErr = err;
       const isLast = i === maxAttempts - 1;
       const isRetriable = err.status === 429 || err.status === 503 || (err.status >= 500 && err.status < 600) || /timeout|ECONNRESET|fetch failed/i.test(String(err.message));
@@ -53,7 +53,7 @@ async function voyageEmbed(text, inputType = 'query') {
   }, 'voyage');
 }
 
-// ── Extraction de mots-clés pour la recherche full-text ───────────────────────
+// ── Stop-words FR pour fallback keyword extraction ────────────────────────────
 const STOP_WORDS_FR = new Set([
   'le','la','les','un','une','des','de','du','en','et','ou','est','sont','etre','ete',
   'quel','quelle','quels','quelles','que','qui','quoi','comment','pourquoi','quand',
@@ -74,11 +74,42 @@ function extractKeywords(text) {
     .join(' ');
 }
 
-// ── Recherche hybride v3 (semantic + full-text + filename) ───────────────────
+// ── Query expansion via Claude Haiku ──────────────────────────────────────────
+async function expandQuery(question) {
+  try {
+    const r = await withRetry(
+      () => anthropic.messages.create({
+        model: HAIKU_MODEL,
+        max_tokens: 100,
+        system: [
+          "Tu es un expert syndical des Industries Électriques et Gazières (IEG / GRDF).",
+          "Pour la question utilisateur, génère 6 à 12 mots-clés français pertinents pour rechercher dans une base d'accords syndicaux et statut IEG (PERS, ENN, DP, accords de branche).",
+          "Inclus : synonymes, sigles spécifiques (CNIEG, CAMIEG, CSP, IRP, PEG, PERCOL), termes juridiques exacts. Décolle les apostrophes (d'invalidité → invalidite).",
+          "Réponds UNIQUEMENT avec les mots-clés séparés par des espaces, en minuscule, sans accents, sans phrase, sans ponctuation, sans explication.",
+          "Exemple : « Quel taux d'abondement ? » → « abondement interessement participation versement plafond peg percol »",
+          "Exemple : « cas d'invalidite type 2 ? » → « invalidite incapacite pension cniega complement statut categorie deuxieme »",
+        ].join('\n'),
+        messages: [{ role: 'user', content: question }],
+      }),
+      'haiku-expand',
+      2
+    );
+    const expanded = r.content[0].text.trim().replace(/[\n\r]/g, ' ').slice(0, 200);
+    console.log('Query expansion:', expanded);
+    return expanded;
+  } catch (e) {
+    console.error('Haiku expand failed:', e.message);
+    return null;
+  }
+}
+
+// ── Recherche hybride v3 ──────────────────────────────────────────────────────
 async function searchDocuments(query, limit = 15) {
   try {
     const embedding = await voyageEmbed(query, 'query');
-    const keywords = extractKeywords(query) || query;
+    const expanded = await expandQuery(query);
+    const fallbackKw = extractKeywords(query) || query;
+    const keywords = expanded || fallbackKw;
     console.log('FT keywords:', keywords);
     const { data, error } = await supabase.rpc('hybrid_search_v3', {
       query_text: keywords,
@@ -97,7 +128,7 @@ async function searchDocuments(query, limit = 15) {
   }
 }
 
-// ── Route principale : question → réponse ────────────────────────────────────
+// ── Route principale ──────────────────────────────────────────────────────────
 app.post('/api/chat', async (req, res) => {
   const { message, history = [] } = req.body;
   if (!message) return res.status(400).json({ error: 'Message manquant' });
@@ -154,7 +185,7 @@ RÈGLES ABSOLUES — NON-NÉGOCIABLES
    Ne renvoie JAMAIS l'utilisateur vers ChatGPT, Wikipedia ou un autre site externe.
 
 ═══════════════════════════════════════════════════════════════
-SIGLES & VOCABULAIRE — connais et utilise correctement
+SIGLES & VOCABULAIRE
 ═══════════════════════════════════════════════════════════════
 - **IEG** : Industries Électriques et Gazières (branche)
 - **PERS** : circulaire du statut du personnel IEG
@@ -165,12 +196,14 @@ SIGLES & VOCABULAIRE — connais et utilise correctement
 - **CSE / CSSCT** : Comité Social et Économique / Commission Santé Sécurité Conditions de Travail
 - **NR / NRn** : Niveau de Rémunération (grille IEG)
 - **CCAS / CMCAS** : activités sociales IEG
+- **CNIEG** : Caisse Nationale des IEG (gère retraite et invalidité)
+- **CAMIEG** : Caisse d'Assurance Maladie des IEG
 - **GMR** : Groupement de maintenance régional GRDF
 - **AT / MP** : accident du travail / maladie professionnelle
 - **PEG / PERCOL** : Plan d'Épargne Groupe / Plan d'Épargne Retraite COLlectif
 
 ═══════════════════════════════════════════════════════════════
-STRUCTURE DE RÉPONSE — à respecter quand pertinent
+STRUCTURE DE RÉPONSE
 ═══════════════════════════════════════════════════════════════
 1. **Réponse directe** en 1-2 phrases (le verdict).
 2. **Détail** : disposition exacte, durée, conditions, montants — chaque ligne sourcée.
@@ -221,7 +254,7 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
 });
 
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
-app.get('/version', (_, res) => res.json({ build: 'v6-filename-retry', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
+app.get('/version', (_, res) => res.json({ build: 'v7-query-expansion', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
