@@ -27,6 +27,7 @@
     background: var(--dark);
     color: var(--text);
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -396,8 +397,23 @@
   @media (max-width: 768px) {
     .sidebar { display: none; }
     .app-sub { display: none; }
+    .sources-bar { display: none; }
     .hints { display: none; }
-    .msg-user .bubble, .msg-ai .bubble { max-width: 90%; }
+    .header { padding: 0 12px; height: 52px; }
+    .logo-img { height: 32px; }
+    .app-name { font-size: 20px; letter-spacing: 3px; }
+    .status-pill { padding: 4px 9px; font-size: 10px; }
+    .messages { padding: 14px 12px; gap: 14px; }
+    .input-zone { padding: 10px 12px 12px; }
+    .input-box { padding: 8px 10px; }
+    .input-box textarea { font-size: 16px; }  /* >= 16px évite le zoom auto iOS */
+    .msg-user .bubble, .msg-ai .bubble { max-width: 92%; padding: 10px 13px; font-size: 14px; }
+    .welcome { padding: 24px 16px; gap: 12px; }
+    .welcome-logo { width: 48px; height: 48px; }
+  }
+  @media (max-width: 480px) {
+    .app-name { font-size: 18px; }
+    .messages { padding: 12px 10px; }
   }
 </style>
 </head>
@@ -490,14 +506,6 @@
             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
           </svg>
         </button>
-      </div>
-      <div class="hints">
-        <div class="hint" onclick="setHint(this)">⏱ Temps de travail</div>
-        <div class="hint" onclick="setHint(this)">💰 Primes & salaires</div>
-        <div class="hint" onclick="setHint(this)">🛡️ Droits CSE</div>
-        <div class="hint" onclick="setHint(this)">🏥 Prévoyance</div>
-        <div class="hint" onclick="setHint(this)">⚖️ Jurisprudence</div>
-        <div class="hint" onclick="setHint(this)">📋 Accord collectif</div>
       </div>
     </div>
 
