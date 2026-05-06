@@ -74,7 +74,23 @@ function extractKeywords(text) {
     .join(' ');
 }
 
-// ── Query expansion via Claude Haiku ──────────────────────────────────────────
+// ── Sanitisation de la sortie Haiku (anti-markdown) ───────────────────────────
+function sanitizeHaikuOutput(raw) {
+  let out = (raw || '').trim();
+  // Retirer markdown : titres #, bullets - * •, numérotation 1.
+  out = out.replace(/^\s*[#>\-*•]+\s*/gm, ' ');
+  out = out.replace(/^\s*\d+[\.\)]\s*/gm, ' ');
+  // Retirer caractères spéciaux markdown / ponctuation forte
+  out = out.replace(/[#*\[\]()`{}|]/g, ' ');
+  out = out.replace(/[\n\r\t]+/g, ' ');
+  out = out.replace(/[:;,]/g, ' ');
+  out = out.replace(/\s+/g, ' ').trim().toLowerCase();
+  // Garder les mots >= 2 chars, exclure les nombres seuls
+  out = out.split(/\s+/).filter(w => w.length >= 2 && !/^[\d.]+$/.test(w)).join(' ');
+  return out.slice(0, 200);
+}
+
+// ── Query expansion via Claude Haiku (mots-clés syndicaux IEG) ────────────────
 async function expandQuery(question) {
   try {
     const r = await withRetry(
@@ -82,30 +98,29 @@ async function expandQuery(question) {
         model: HAIKU_MODEL,
         max_tokens: 100,
         system: [
-          "⚠️ FORMAT DE RÉPONSE STRICT : tu réponds en UNE SEULE LIGNE avec 3 à 6 mots-clés séparés par des espaces. PAS de markdown, PAS de # titre, PAS de - tirets, PAS de bullet points, PAS de retours à la ligne, PAS d'explication. JUSTE les mots-clés.",
-          "Tu es un expert syndical IEG/GRDF qui aide à générer des mots-clés de recherche. Tu reçois une question utilisateur qui peut contenir des FAUTES D'ORTHOGRAPHE, apostrophes manquantes, accents oubliés.",
-          "Étapes :",
-          " 1. Corrige mentalement TOUTES les fautes : orthographe, accords, accents, conjugaisons, frappes inversées, apostrophes manquantes (dinvalidite → invalidite, abondemen → abondement, retrate → retraite, syndicale → syndicale, intéressment → interessement, primre → prime).",
-          " 2. Identifie le concept syndical IEG dont parle la question — même si l'utilisateur utilise un terme du régime général (catégorie 2 → incapacité totale ; arrêt maladie → maladie longue ; mutuelle → CAMIEG ; retraite complémentaire → PERCOL).",
-          " 3. Génère 3 à 6 mots-clés français qui figurent EXACTEMENT dans le vocabulaire des accords IEG, en minuscule sans accents.",
-          "Règles :",
-          " - Privilégie les sigles spécifiques IEG : CNIEG, CAMIEG, CSP, CSNP, IRP, CSE, CSSCT, PEG, PERCOL, PEI, NR, NRn, GMR, IEG, AT, MP, IVD",
-          " - Inclus les identifiants exacts s'ils sont mentionnés (PERS 187, DP37-44, ENN1129…)",
-          " - Évite les mots génériques seuls (PERS sans numéro, rente, categorie, taux, montant) sauf s'ils sont centraux",
-          "Réponds UNIQUEMENT avec les 3 à 6 mots-clés séparés par des espaces, en minuscule, sans accents, sans phrase, sans ponctuation, sans explication.",
-          "Exemples (la question peut contenir des fautes — corrige-les) :",
-          "  « Quel taux dabondement ? » → « abondement interessement plafond peg percol »",
-          "  « cas dinvalidite tipe 2 ? » → « invalidite incapacite pension cniega complement »",
-          "  « Quels droit en cas darret maladi ? » → « maladie arret pension cniega caamieg »",
-          "  « Comben je gagn en astrente ? » → « astreinte sujetions service indemnite PERS194 »",
-          "  « vol matériel info procedure disciplinare » → « discipline sanction csp pers846 vol »",
+          "FORMAT DE REPONSE STRICT (NON NEGOCIABLE) : tu reponds en UNE SEULE LIGNE avec 3 a 6 mots-cles separes par des espaces. PAS de markdown, PAS de # titre, PAS de tirets, PAS de bullet points, PAS de retours a la ligne, PAS d'explication, PAS de prefixe. JUSTE les mots-cles.",
+          "",
+          "Tu es un expert syndical IEG/GRDF. Tu recois une question pouvant contenir des fautes d'orthographe, apostrophes manquantes, accents oublies. Corrige mentalement les fautes et identifie les concepts syndicaux IEG.",
+          "",
+          "Privilegie les sigles IEG : CNIEG, CAMIEG, CSP, CSNP, IRP, CSE, CSSCT, PEG, PERCOL, PEI, NR, NRn, GMR, IEG, AT, MP, IVD, PERS",
+          "Si un identifiant est mentionne (PERS 187, DP37-44, ENN1129), inclus-le tel quel.",
+          "Evite les mots vagues seuls (PERS sans numero, rente, categorie, taux, montant) sauf s'ils sont centraux.",
+          "Mots-cles toujours en minuscule, sans accents, sans ponctuation, sans phrase.",
+          "",
+          "Exemples (la question peut avoir des fautes) :",
+          "  Quel taux dabondement ?  ->  abondement interessement plafond peg percol",
+          "  cas dinvalidite tipe 2 ?  ->  invalidite incapacite pension cniega complement",
+          "  Comment se passe la remuneration en invalidite 2 ?  ->  invalidite cniega complement pension remuneration",
+          "  Quels droit en cas darret maladi ?  ->  maladie arret pension cniega caamieg",
+          "  Comben je gagn en astrente ?  ->  astreinte sujetions service indemnite pers194",
+          "  vol materiel info procedure disciplinare  ->  discipline sanction csp pers846 vol",
         ].join('\n'),
         messages: [{ role: 'user', content: question }],
       }),
       'haiku-expand',
       2
     );
-    const expanded = r.content[0].text.trim().replace(/[\n\r]/g, ' ').slice(0, 200);
+    const expanded = sanitizeHaikuOutput(r.content[0].text);
     console.log('Query expansion:', expanded);
     return expanded;
   } catch (e) {
@@ -175,12 +190,9 @@ RÈGLES ABSOLUES — NON-NÉGOCIABLES
 
 3. **🚫 INTERDICTION ABSOLUE D'INVENTER UNE RÉFÉRENCE.**
    - Tu ne dois JAMAIS citer un numéro de PERS, DP, ENN, N, article de loi, jurisprudence, accord, ou date qui n'apparaît pas EXPLICITEMENT dans le contexte fourni.
-   - Si l'utilisateur te demande "Que dit la PERS X ?" et que cette PERS X n'est pas dans le contexte : dis « La PERS X n'est pas dans ma base documentaire actuelle ». Ne mentionne PAS d'autres PERS sauf s'ils figurent vraiment dans le contexte.
-   - Pareil pour les articles : ne cite jamais "article L.X-Y du Code du travail" sans être absolument sûr qu'il figure dans le contexte.
    - Si tu ne sais pas, dis « Je ne sais pas » plutôt que d'inventer.
 
 4. **Citations** : à la fin de CHAQUE affirmation factuelle, cite la source au format \`[Réf: NOM_DU_FICHIER]\`.
-   Exemple : "Le maintien de salaire est de 12 mois [Réf: PERS191.pdf]."
    N'utilise QUE les noms de fichier qui figurent dans la liste des sources fournies.
 
 5. **Hiérarchie des normes** (du plus protecteur au moins protecteur) :
@@ -193,7 +205,6 @@ RÈGLES ABSOLUES — NON-NÉGOCIABLES
 6. **Si l'info manque** : dis-le honnêtement et oriente vers la section syndicale :
    - Mail : syndicat-fo_grdf-delegations-nationales@grdf.fr
    - Instagram : @FO_GRDF
-   Ne renvoie JAMAIS l'utilisateur vers ChatGPT, Wikipedia ou un autre site externe.
 
 ═══════════════════════════════════════════════════════════════
 SIGLES & VOCABULAIRE
@@ -203,8 +214,9 @@ SIGLES & VOCABULAIRE
 - **ENN** : décision d'extension appliquant un PERS
 - **DP** : directive personnel
 - **CSP** : commission secondaire du personnel
+- **CSNP** : commission supérieure nationale du personnel
 - **IRP** : instances représentatives du personnel
-- **CSE / CSSCT** : Comité Social et Économique / Commission Santé Sécurité Conditions de Travail
+- **CSE / CSSCT** : Comité Social et Économique / Commission SSCT
 - **NR / NRn** : Niveau de Rémunération (grille IEG)
 - **CCAS / CMCAS** : activités sociales IEG
 - **CNIEG** : Caisse Nationale des IEG (gère retraite et invalidité)
@@ -232,7 +244,7 @@ Professionnel, militant, factuel. Tu es à l'écoute mais tu ne fais pas de psyc
 ${context ? `═══════════════════════════════════════════════════════════════
 CONTEXTE DOCUMENTAIRE POUR CETTE QUESTION
 ═══════════════════════════════════════════════════════════════
-${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette question. Tu peux faire un rappel général sur les principes du statut IEG et du Code du travail SANS citer de numéro précis (PERS, DP, ENN, articles), et oriente vers la section syndicale FO.'}`;
+${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette question.'}`;
 
     const messages = [
       ...history.map(h => ({ role: h.role, content: h.content })),
