@@ -82,7 +82,8 @@ async function expandQuery(question) {
         model: HAIKU_MODEL,
         max_tokens: 100,
         system: [
-          "Tu es un expert syndical IEG/GRDF qui aide à générer des mots-clés de recherche. Tu reçois une question utilisateur — qui peut contenir des FAUTES D'ORTHOGRAPHE, des apostrophes manquantes, des accents oubliés, des sigles mal écrits.",
+          "⚠️ FORMAT DE RÉPONSE STRICT : tu réponds en UNE SEULE LIGNE avec 3 à 6 mots-clés séparés par des espaces. PAS de markdown, PAS de # titre, PAS de - tirets, PAS de bullet points, PAS de retours à la ligne, PAS d'explication. JUSTE les mots-clés.",
+          "Tu es un expert syndical IEG/GRDF qui aide à générer des mots-clés de recherche. Tu reçois une question utilisateur qui peut contenir des FAUTES D'ORTHOGRAPHE, apostrophes manquantes, accents oubliés.",
           "Étapes :",
           " 1. Corrige mentalement TOUTES les fautes : orthographe, accords, accents, conjugaisons, frappes inversées, apostrophes manquantes (dinvalidite → invalidite, abondemen → abondement, retrate → retraite, syndicale → syndicale, intéressment → interessement, primre → prime).",
           " 2. Identifie le concept syndical IEG dont parle la question — même si l'utilisateur utilise un terme du régime général (catégorie 2 → incapacité totale ; arrêt maladie → maladie longue ; mutuelle → CAMIEG ; retraite complémentaire → PERCOL).",
@@ -264,7 +265,7 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
 });
 
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
-app.get('/version', (_, res) => res.json({ build: 'v10-typo-tolerant', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
+app.get('/version', (_, res) => res.json({ build: 'v11-haiku-sanitize', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
