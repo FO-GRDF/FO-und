@@ -609,6 +609,52 @@
     renderHistory();
   }
 
+  // ── Auto-correction orthographique (LanguageTool API, silencieux) ─────────
+  // Whitelist : mots IEG/syndicaux qu'on ne touche jamais
+  const SPELL_WHITELIST = /^(PERS|DP|ENN|CNIEG|CAMIEG|CSP|CSNP|IRP|CSE|CSSCT|GMR|IEG|GRDF|EDF|RTE|GRT|PEG|PERCOL|PEI|PERCO|NR|NRn|GF|RPS|AT|MP|IVD|CCAS|CMCAS|UFE|UNEMIG|FCE|FNEM|FNME|CFE|CGT|CFTC|CFDT|CGC|CCN|FO|KALI|KALITEXT|JORF)/i;
+
+  async function autoCorrect(text) {
+    if (!text || text.length < 4) return text;
+    try {
+      const params = new URLSearchParams();
+      params.append('text', text);
+      params.append('language', 'fr');
+      const ctrl = new AbortController();
+      const timeoutId = setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch('https://api.languagetool.org/v2/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params,
+        signal: ctrl.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) return text;
+      const data = await res.json();
+      // Filtrer les matches : on ne corrige QUE les fautes d'orthographe (TYPOS / MORFOLOGIK / HUNSPELL),
+      // pas les règles de style. Et on ignore les mots IEG en whitelist.
+      const matches = (data.matches || []).filter(m => {
+        if (!m.replacements || m.replacements.length === 0) return false;
+        const original = text.slice(m.offset, m.offset + m.length);
+        if (SPELL_WHITELIST.test(original)) return false;
+        // Catégories à appliquer : fautes typographiques + orthographe
+        const cat = (m.rule && m.rule.category && m.rule.category.id) || '';
+        const issueType = m.rule && m.rule.issueTypeName;
+        return /TYPOS|MISC|GRAMMAR|MORFOLOGIK|SPELLING/i.test(cat) || /typographical|misspelling/i.test(issueType);
+      }).sort((a, b) => b.offset - a.offset);
+
+      let corrected = text;
+      for (const m of matches) {
+        const before = corrected.slice(0, m.offset);
+        const after = corrected.slice(m.offset + m.length);
+        corrected = before + m.replacements[0].value + after;
+      }
+      return corrected;
+    } catch (e) {
+      console.warn('autoCorrect failed:', e.message);
+      return text;
+    }
+  }
+
   // ── Envoi message ──────────────────────────────────────────────────────────
   async function sendMessage() {
     const input = document.getElementById('input');
@@ -621,16 +667,23 @@
 
     input.value = '';
     input.style.height = 'auto';
-
-    appendUserBubble(msg);
-    const typingEl = appendTyping();
     setLoading(true);
+
+    // Auto-correction silencieuse (3-4s max, fallback si timeout)
+    let finalMsg = msg;
+    try {
+      finalMsg = await autoCorrect(msg);
+      if (finalMsg !== msg) console.log('Auto-correction:', msg, '→', finalMsg);
+    } catch (e) { /* keep original */ }
+
+    appendUserBubble(finalMsg);
+    const typingEl = appendTyping();
 
     try {
       const res = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg, history }),
+        body: JSON.stringify({ message: finalMsg, history }),
       });
 
       if (!res.ok) throw new Error(`Erreur ${res.status}`);
