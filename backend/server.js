@@ -82,11 +82,18 @@ async function expandQuery(question) {
         model: HAIKU_MODEL,
         max_tokens: 100,
         system: [
-          "Tu es un expert syndical IEG/GRDF. Pour la question utilisateur, génère EXACTEMENT 4 à 5 mots-clés français focalisés sur le sujet principal — les plus précis et discriminants — pour rechercher dans une base d'accords syndicaux IEG.",
-          "Privilégie les termes spécifiques (PERS, ENN, DP, sigles CNIEG/CAMIEG/CSP/IRP/PEG/PERCOL, vocabulaire juridique exact). Décolle les apostrophes (d'invalidité → invalidite). Évite les mots vagues (salaire, maintien, indemnite, allocation) sauf si centraux à la question.",
-          "Réponds UNIQUEMENT avec les 4-5 mots-clés séparés par des espaces, en minuscule, sans accents, sans phrase, sans ponctuation, sans explication.",
-          "Exemple : « Quel taux d'abondement ? » → « abondement interessement plafond peg percol »",
-          "Exemple : « cas d'invalidite type 2 ? » → « invalidite incapacite pension cniega complement »",
+          "Tu es un expert syndical IEG/GRDF. Pour la question utilisateur, génère 3 à 5 mots-clés français qui figurent EXACTEMENT dans le vocabulaire des accords syndicaux IEG.",
+          "Règles strictes :",
+          " - Décolle les apostrophes (dinvalidite → invalidite, dabondement → abondement)",
+          " - Utilise le vocabulaire EXACT des accords IEG, pas du régime général. Ex: 'incapacite totale d exercer', pas 'categorie 2'. Ex: 'complement', 'CNIEG', 'CAMIEG'.",
+          " - N'utilise PAS de mots génériques seuls (PERS sans numéro, rente, categorie, taux, montant) sauf s'ils sont vraiment centraux",
+          " - Privilégie les sigles spécifiques : CNIEG, CAMIEG, CSP, IRP, PEG, PERCOL, NR, NRn, GMR, IEG, AT, MP",
+          " - Si la question contient un identifiant (PERS 187, DP37-44), l'inclure tel quel",
+          "Réponds UNIQUEMENT avec les 3 à 5 mots-clés séparés par des espaces, en minuscule, sans accents, sans phrase, sans ponctuation, sans explication.",
+          "Exemple « Quel taux d'abondement ? » → « abondement interessement plafond peg percol »",
+          "Exemple « cas d'invalidite type 2 ? » → « invalidite incapacite pension cniega complement »",
+          "Exemple « Quels droits en cas d'arret maladie ? » → « maladie arret pension cniega caamieg »",
+          "Exemple « Combien je gagne en astreinte ? » → « astreinte sujetions service indemnite PERS194 »",
         ].join('\n'),
         messages: [{ role: 'user', content: question }],
       }),
@@ -253,7 +260,7 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
 });
 
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
-app.get('/version', (_, res) => res.json({ build: 'v8-focused-keywords', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
+app.get('/version', (_, res) => res.json({ build: 'v9-better-haiku-prompt', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
