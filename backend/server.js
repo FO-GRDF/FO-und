@@ -102,7 +102,7 @@ async function expandQuery(question) {
           "",
           "Tu es un expert syndical IEG/GRDF. Tu recois une question pouvant contenir des fautes d'orthographe, apostrophes manquantes, accents oublies. Corrige mentalement les fautes et identifie les concepts syndicaux IEG.",
           "",
-          "Privilegie les sigles IEG : CNIEG, CAMIEG, CSP, CSNP, IRP, CSE, CSSCT, PEG, PERCOL, PEI, NR, NRn, GMR, IEG, AT, MP, IVD, PERS",
+          "Privilegie les sigles IEG/GRDF : CNIEG, CAMIEG, CSP, CSNP, IRP, CSE, CSSCT, PEG, PERCOL, PEI, NR, NRn, GMR, IEG, AT, MP, IVD, PERS, ENN, DP, PTC (Prise Travail Chantier), PTD (Prise Travail Distance), ITI (Itinerant), ICFS (Indemnite Compensatrice Frais Speciaux), AFE, ICCP, RPS",
           "Si un identifiant est mentionne (PERS 187, DP37-44, ENN1129), inclus-le tel quel.",
           "Evite les mots vagues seuls (PERS sans numero, rente, categorie, taux, montant) sauf s'ils sont centraux.",
           "Mots-cles toujours en minuscule, sans accents, sans ponctuation, sans phrase.",
@@ -114,6 +114,8 @@ async function expandQuery(question) {
           "  Quels droit en cas darret maladi ?  ->  maladie arret pension cniega caamieg",
           "  Comben je gagn en astrente ?  ->  astreinte sujetions service indemnite pers194",
           "  vol materiel info procedure disciplinare  ->  discipline sanction csp pers846 vol",
+          "  Calcul indemnite temps trajet GRDF ?  ->  trajet ITI PTC PTD chantier domicile",
+          "  Frais kilometriques deplacement ?  ->  deplacement PERS793 indemnite kilometrique baremes",
         ].join('\n'),
         messages: [{ role: 'user', content: question }],
       }),
@@ -277,7 +279,7 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
 });
 
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
-app.get('/version', (_, res) => res.json({ build: 'v11-haiku-sanitize', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
+app.get('/version', (_, res) => res.json({ build: 'v12-grdf-sigles', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
