@@ -690,7 +690,11 @@
       const data = await res.json();
 
       typingEl.remove();
-      appendAIBubble(data.answer, data.sources || []);
+      let answerText = data.answer;
+      if (data.search_error) {
+        answerText = "⚠️ **Base documentaire momentanément inaccessible** — cette réponse ne s'appuie sur aucun document interne. Signale-le à la section.\n\n" + answerText;
+      }
+      appendAIBubble(answerText, data.sources || []);
 
       // Mise à jour historique
       history.push({ role: 'user', content: msg });

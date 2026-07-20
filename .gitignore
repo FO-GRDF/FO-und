@@ -3,3 +3,9 @@ node_modules/
 *.log
 .DS_Store
 dist/
+
+scripts/_diag_temp.mjs
+scripts/_pdf_audit_temp.mjs
+ocr_vision.log
+rapport_indexation.csv
+nohup.out

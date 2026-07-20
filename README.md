@@ -125,3 +125,29 @@ Pour PDF et DOCX, convertis-les d'abord en texte ou contacte-nous pour une versi
 ## 📞 Support
 
 Développé par DESTINATION PRÉVENTION — destination-prevention.fr
+
+---
+
+## 🔄 Mise à jour du 20/07/2026 — remise en état complète
+
+**Ce qui a changé** (suite à l'audit : base Supabase supprimée + 292 PDF scannés jamais lus) :
+
+| Fichier | Rôle |
+|---|---|
+| `scripts/supabase_setup_v2.sql` | Recrée TOUT : table + index + fonction `hybrid_search_v3` (le SQL v1 ne la créait pas) |
+| `scripts/index_documents_v4.mjs` | Indexation avec prise en charge du dossier `OCR_FO-UND` + rapport qualité `rapport_indexation.csv` |
+| `scripts/test_recette.mjs` | Batterie de 15 questions-tests contre le backend en prod |
+| `.github/workflows/keepalive.yml` | Ping 2×/semaine → Supabase ne sera plus jamais mis en pause/supprimé |
+| `backend/server.js` v13 | Endpoint `/stats` (état de la base) + panne de recherche VISIBLE (plus d'échec silencieux) |
+
+**OCR** : les PDF scannés (accords GRDF signés, PERS anciens) sont océrisés via Apple Vision
+(script local, sortie `.txt` dans `Dossier ressources /OCR_FO-UND/`, miroir de l'arborescence).
+L'indexeur v4 remplace automatiquement chaque PDF scanné par son `.txt` océrisé,
+en gardant le nom du PDF original comme source de citation.
+
+**Réindexation complète** :
+```bash
+cd scripts
+node index_documents_v4.mjs --dir "/Users/lopesmickael/Documents/FNEM/FO service gaz/Dossier ressources "
+node test_recette.mjs   # recette
+```

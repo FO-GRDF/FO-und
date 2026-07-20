@@ -149,10 +149,10 @@ async function searchDocuments(query, limit = 15) {
       rrf_k: 50,
     });
     if (error) throw error;
-    return data || [];
+    return { docs: data || [], error: null };
   } catch (err) {
     console.error('Erreur recherche documents:', err.message);
-    return [];
+    return { error: err.message, docs: [] };
   }
 }
 
@@ -162,7 +162,10 @@ app.post('/api/chat', async (req, res) => {
   if (!message) return res.status(400).json({ error: 'Message manquant' });
 
   try {
-    const docs = await searchDocuments(message);
+    const searchResult = await searchDocuments(message);
+    const docs = searchResult.docs || [];
+    const searchError = searchResult.error || null;
+    if (searchError) console.error('⚠️ RECHERCHE EN PANNE — réponse sans contexte:', searchError);
 
     let context = '';
     if (docs.length > 0) {
@@ -246,7 +249,9 @@ Professionnel, militant, factuel. Tu es à l'écoute mais tu ne fais pas de psyc
 ${context ? `═══════════════════════════════════════════════════════════════
 CONTEXTE DOCUMENTAIRE POUR CETTE QUESTION
 ═══════════════════════════════════════════════════════════════
-${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette question.'}`;
+${context}` : (searchError
+  ? '⚠️ PANNE TECHNIQUE : la base documentaire est INACCESSIBLE (' + searchError + '). Dis-le clairement à l\'utilisateur en début de réponse et invite-le à signaler le problème à la section. Ne réponds que par des rappels généraux.'
+  : 'Aucun document interne pertinent n\'a été trouvé pour cette question.')}`;
 
     const messages = [
       ...history.map(h => ({ role: h.role, content: h.content })),
@@ -271,7 +276,7 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
       similarity: d.similarity,
     }));
 
-    res.json({ answer, sources });
+    res.json({ answer, sources, search_error: searchError });
   } catch (err) {
     console.error('Erreur chat:', err);
     res.status(500).json({ error: 'Erreur serveur', detail: err.message });
@@ -279,7 +284,17 @@ ${context}` : 'Aucun document interne pertinent n\'a été trouvé pour cette qu
 });
 
 app.get('/health', (_, res) => res.json({ status: 'ok', service: 'FO-UND API' }));
-app.get('/version', (_, res) => res.json({ build: 'v12-grdf-sigles', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
+
+app.get('/stats', async (_, res) => {
+  try {
+    const { count, error } = await supabase.from('documents').select('*', { count: 'exact', head: true });
+    if (error) throw error;
+    res.json({ chunks: count, base: count > 0 ? 'ok' : 'VIDE — réindexation nécessaire' });
+  } catch (err) {
+    res.status(500).json({ chunks: null, base: 'INACCESSIBLE', detail: err.message });
+  }
+});
+app.get('/version', (_, res) => res.json({ build: 'v13-stats-erreurs-visibles', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
