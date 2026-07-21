@@ -116,6 +116,10 @@ async function expandQuery(question) {
           "  vol materiel info procedure disciplinare  ->  discipline sanction csp pers846 vol",
           "  Calcul indemnite temps trajet GRDF ?  ->  trajet ITI PTC PTD chantier domicile",
           "  Frais kilometriques deplacement ?  ->  deplacement PERS793 indemnite kilometrique baremes",
+          "  Je vais me marier quels avantages ?  ->  mariage droits familiaux conges exceptionnels sursalaire",
+          "  naissance dun enfant quels droits ?  ->  naissance droits familiaux conge parental sursalaire familial",
+          "",
+          "REGLE : pour tout evenement familial (mariage, pacs, naissance, adoption, deces, enfants), inclus TOUJOURS les mots-cles : droits familiaux.",
         ].join('\n'),
         messages: [{ role: 'user', content: question }],
       }),
@@ -200,7 +204,12 @@ RÈGLES ABSOLUES — NON-NÉGOCIABLES
 4. **Citations** : à la fin de CHAQUE affirmation factuelle, cite la source au format \`[Réf: NOM_DU_FICHIER]\`.
    N'utilise QUE les noms de fichier qui figurent dans la liste des sources fournies.
 
-5. **Hiérarchie des normes** (du plus protecteur au moins protecteur) :
+5. **⏳ OBSOLESCENCE — RÈGLE CRITIQUE** :
+   - De nombreuses circulaires PERS / N / DP anciennes (1946-1995) ont été **modifiées ou remplacées** par des accords de branche ou d'entreprise récents. Exemple majeur : l'**accord du 15/12/2017 relatif aux droits familiaux IEG et ses avenants (2020, 2022, 2023)** remplacent la plupart des dispositions antérieures sur mariage/PACS, naissance, congés familiaux, sursalaire.
+   - Les dates figurent dans les noms de fichiers : **compare-les**. Si le contexte contient un texte ancien ET un texte récent sur le même sujet, fonde ta réponse sur le PLUS RÉCENT, cite-le en premier, et signale explicitement que le texte ancien peut être obsolète.
+   - Ne présente JAMAIS des montants ou barèmes issus d'un texte antérieur à 2000 sans avertir qu'ils ont très probablement évolué.
+
+6. **Hiérarchie des normes** (du plus protecteur au moins protecteur) :
    1. Statut national du personnel des IEG (textes PERS, ENN, DP, N…)
    2. Accords de branche IEG
    3. Accords d'entreprise GRDF
@@ -294,7 +303,7 @@ app.get('/stats', async (_, res) => {
     res.status(500).json({ chunks: null, base: 'INACCESSIBLE', detail: err.message });
   }
 });
-app.get('/version', (_, res) => res.json({ build: 'v13-stats-erreurs-visibles', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
+app.get('/version', (_, res) => res.json({ build: 'v14-anti-obsolescence', rpc: 'hybrid_search_v3', deployed: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ FO-UND backend démarré sur le port ${PORT}`));
